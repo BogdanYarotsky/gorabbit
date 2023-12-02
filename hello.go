@@ -1,72 +1,68 @@
-// Copyright 2023 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
-// Hello is a hello, world program, demonstrating
-// how to write a simple command-line program.
-//
-// Usage:
-//
-//	hello [options] [name]
-//
-// The options are:
-//
-//	-g greeting
-//		Greet with the given greeting, instead of "Hello".
-//
-//	-r
-//		Greet in reverse.
-//
-// By default, hello greets the world.
-// If a name is specified, hello greets that name instead.
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"os"
 
-	"github.com/BogdanYarotsky/gorabbit/reverse"
+	"github.com/rabbitmq/amqp091-go"
+	"github.com/spf13/cobra"
 )
 
-func usage() {
-	fmt.Fprintf(os.Stderr, "usage: hello [options] [name]\n")
-	flag.PrintDefaults()
-	os.Exit(2)
+var rootCmd = &cobra.Command{
+	Use:   "gorabbit",
+	Short: "RabbitMQ CLI",
 }
 
-var (
-	greeting    = flag.String("g", "Hello", "Greet with `greeting`")
-	reverseFlag = flag.Bool("r", false, "Greet in reverse")
-)
+var declareCmd = &cobra.Command{
+	Use:   "declare [resource]",
+	Short: "Declare a resource like exchange, queue, etc.",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		resource := args[0]
+		switch resource {
+		case "exchange":
+			name, _ := cmd.Flags().GetString("name")
+			exchangeType, _ := cmd.Flags().GetString("type")
+			fmt.Printf("Declaring exchange: %s of type %s\n", name, exchangeType)
+			conn, err := amqp091.Dial("amqp://guest:guest@localhost:5672/")
+			if err != nil {
+				log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+			}
+			defer conn.Close()
+
+			ch, err := conn.Channel()
+			if err != nil {
+				log.Fatalf("Failed to open a channel: %v", err)
+			}
+			defer ch.Close()
+			err = ch.ExchangeDeclare(
+				name,         // name
+				exchangeType, // type
+				true,         // durable
+				false,        // auto-deleted
+				false,        // internal
+				false,        // no-wait
+				nil,          // arguments
+			)
+			if err != nil {
+				log.Fatalf("Failed to declare an exchange: %v", err)
+			}
+		}
+	},
+}
+
+func init() {
+	declareCmd.Flags().StringP("name", "n", "", "Name of the exchange")
+	declareCmd.Flags().StringP("type", "t", "", "Type of the exchange")
+	declareCmd.MarkFlagRequired("name")
+	declareCmd.MarkFlagRequired("type")
+	rootCmd.AddCommand(declareCmd)
+}
 
 func main() {
-	// Configure logging for a command-line program.
-	log.SetFlags(0)
-	log.SetPrefix("hello: ")
-
-	// Parse flags.
-	flag.Usage = usage
-	flag.Parse()
-
-	// Parse and validate arguments.
-	name := "world"
-	args := flag.Args()
-	if len(args) >= 2 {
-		usage()
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	if len(args) >= 1 {
-		name = args[0]
-	}
-	if name == "" { // hello '' is an error
-		log.Fatalf("invalid name %q", name)
-	}
-
-	// Run actual logic.
-	if *reverseFlag {
-		fmt.Printf("%s, %s!\n", reverse.String(*greeting), reverse.String(name))
-		return
-	}
-	fmt.Printf("%s, %s!\n", *greeting, name)
 }
